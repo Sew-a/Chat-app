@@ -10,6 +10,14 @@ exports.StorageService = void 0;
 const common_1 = require("@nestjs/common");
 const client_s3_1 = require("@aws-sdk/client-s3");
 const crypto_1 = require("crypto");
+const MIME_TO_EXT = {
+    'image/jpeg': '.jpg',
+    'image/png': '.png',
+    'image/webp': '.webp',
+    'image/gif': '.gif',
+    'image/avif': '.avif',
+};
+const MAX_IMAGE_SIZE = 10 * 1024 * 1024;
 let StorageService = class StorageService {
     client = null;
     getConfig() {
@@ -26,25 +34,37 @@ let StorageService = class StorageService {
             this.client = new client_s3_1.S3Client({
                 region: 'auto',
                 endpoint: config.endpoint,
+                forcePathStyle: true,
                 credentials: { accessKeyId: config.accessKeyId, secretAccessKey: config.secretAccessKey },
             });
         }
         return this.client;
+    }
+    assertImage(file) {
+        const ext = MIME_TO_EXT[(file.mimetype ?? '').toLowerCase()];
+        if (!ext) {
+            throw new common_1.BadRequestException('Only JPEG, PNG, WebP, GIF and AVIF images are allowed');
+        }
+        if (!file.size || file.size > MAX_IMAGE_SIZE) {
+            throw new common_1.BadRequestException(`Image must be no larger than ${MAX_IMAGE_SIZE / (1024 * 1024)} MB`);
+        }
+        return ext;
     }
     async uploadImage(file, folder = 'messages') {
         const config = this.getConfig();
         if (!config.endpoint || !config.accessKeyId || !config.secretAccessKey || !config.bucket || !config.publicBaseUrl) {
             throw new common_1.ServiceUnavailableException('R2 storage is not configured (R2_ENDPOINT, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET_NAME, R2_PUBLIC_BASE_URL)');
         }
-        const ext = file.originalname.split('.').pop() || 'bin';
-        const key = `${folder}/${(0, crypto_1.randomUUID)()}.${ext}`;
+        const ext = this.assertImage(file);
+        const safeFolder = folder.replace(/[^a-zA-Z0-9_-]/g, '');
+        const key = `${safeFolder || 'messages'}/${(0, crypto_1.randomUUID)()}${ext}`;
         await this.getClient(config).send(new client_s3_1.PutObjectCommand({
             Bucket: config.bucket,
             Key: key,
             Body: file.buffer,
             ContentType: file.mimetype,
         }));
-        return `${config.publicBaseUrl}/${key}`;
+        return `${config.publicBaseUrl.replace(/\/+$/, '')}/${key}`;
     }
 };
 exports.StorageService = StorageService;

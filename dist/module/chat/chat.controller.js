@@ -20,6 +20,7 @@ const current_user_decorator_1 = require("../../common/decorators/current-user.d
 const storage_service_1 = require("../../lib/storage/storage.service");
 const group_service_1 = require("../group/group.service");
 const chat_service_1 = require("./chat.service");
+const MAX_IMAGE_SIZE = 10 * 1024 * 1024;
 let ChatController = class ChatController {
     chatService;
     storageService;
@@ -53,7 +54,15 @@ __decorate([
 ], ChatController.prototype, "getHistory", null);
 __decorate([
     (0, common_1.Post)('image'),
-    (0, common_1.UseInterceptors)((0, platform_express_1.FileInterceptor)('file')),
+    (0, common_1.UseInterceptors)((0, platform_express_1.FileInterceptor)('file', {
+        limits: { fileSize: MAX_IMAGE_SIZE, files: 1 },
+        fileFilter: (_req, file, cb) => {
+            if (!file.mimetype?.startsWith('image/')) {
+                return cb(new common_1.BadRequestException('Only image files are allowed'), false);
+            }
+            cb(null, true);
+        },
+    })),
     __param(0, (0, current_user_decorator_1.CurrentUser)()),
     __param(1, (0, common_1.Param)('groupId')),
     __param(2, (0, common_1.UploadedFile)()),
