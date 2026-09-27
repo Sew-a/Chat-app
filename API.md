@@ -43,6 +43,10 @@ Request body:
 { "email": "sev@example.com", "password": "at-least-8-chars" }
 ```
 
+Emails are case-insensitive: they are trimmed and lowercased on sign-up and
+sign-in. `avatarUrl` (sign-up and profile update) must be an `https://` URL;
+an empty string is treated as "no avatar" (on profile update it clears it).
+
 Response `200`: same shape as signup.
 
 Store `accessToken` (e.g. in memory + httpOnly-adjacent storage or a secure
@@ -144,7 +148,8 @@ Response:
 
 Flow: upload the image via this endpoint first, then send the returned
 `imageUrl` (optionally with caption text) over the WebSocket `send_message`
-event below.
+event below. `send_message` only accepts image URLs produced by this endpoint
+(`<R2_PUBLIC_BASE_URL>/messages/<uuid>.<ext>`); any other URL is rejected with 400.
 
 ---
 
@@ -181,6 +186,19 @@ socket.emit('send_message', {
 ```js
 socket.on('new_message', (message) => {
   // message has the same shape as the history endpoint's items
+});
+```
+
+### Errors
+Any rejected event (bad/expired token, invalid payload, not a member, foreign
+`imageUrl`, ...) is reported on the `exception` event:
+
+```js
+socket.on('exception', (err) => {
+  // { status: 'error', statusCode: 401, message: 'Invalid or expired token', event: 'join_group' }
+  // statusCode mirrors REST: 400 validation, 401 auth, 404 not a member.
+  // `message` is a string, or a string[] for validation errors.
+  if (err.statusCode === 401) { /* sign the user out / refresh the token */ }
 });
 ```
 

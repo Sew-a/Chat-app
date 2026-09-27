@@ -32,8 +32,9 @@ Built with **NestJS 12**, **Prisma + PostgreSQL**, **Socket.io**, and
 
 ## Features
 
-- Email + password auth (argon2 hashed), JWT (`7d` expiry).
-- Each user has a username and optional avatar URL.
+- Email + password auth (argon2 hashed), JWT (`7d` expiry). Emails are
+  case-insensitive (trimmed + lowercased).
+- Each user has a username and optional avatar URL (`https://` only).
 - **Create group** → server generates a unique invite code; creator is
   auto-joined. **Join group** → type an existing invite code. No separate
   password: the invite code *is* the key (like Discord invite links / Kahoot).
@@ -69,9 +70,11 @@ src/
 │       └── storage.service.ts  # R2 upload (path-style S3, image whitelist)
 ├── common/
 │   ├── decorators/
-│   │   └── current-user.decorator.ts   # @CurrentUser() -> { userId, email }
+│   │   ├── current-user.decorator.ts   # @CurrentUser() -> { userId, email }
+│   │   └── normalize-email.decorator.ts # trim + lowercase emails in DTOs
 │   ├── filters/
-│   │   └── multer-error.filter.ts      # MulterError -> 413 / 400 (added)
+│   │   ├── multer-error.filter.ts      # MulterError -> 413 / 400
+│   │   └── ws-exception.filter.ts      # HttpException -> structured WS `exception` event
 │   └── guards/
 │       ├── jwt-auth.guard.ts           # HTTP JWT guard
 │       └── ws-auth.guard.ts            # WebSocket JWT guard
@@ -120,7 +123,7 @@ cp .env.example .env   # adjust DATABASE_URL / JWT_SECRET as needed
 # 3. Install, generate the Prisma client, sync the schema
 npm install
 npm run prisma:generate
-npm run prisma:push
+npm run prisma:deploy   # applies prisma/migrations
 
 # 4. Run (dev watches; prod uses dist/)
 npm run start:dev     # or npm run build && npm run start:prod
@@ -204,6 +207,7 @@ Connect to the `chat` namespace, e.g. `io('http://localhost:3000/chat', { auth: 
 | `joined_group` | `{ groupId }` (ack of `join_group`)      |
 | `message_sent` | `{ messageId }` (ack of `send_message`)  |
 | `new_message`  | Full message incl. `user { id, username, avatarUrl }` — broadcast to all room members (sender included) |
+| `exception`    | `{ status: 'error', statusCode, message, event }` — any rejected event (401 bad token, 400 invalid payload / foreign `imageUrl`, 404 not a member) |
 
 ## Image Upload Flow
 
@@ -213,6 +217,9 @@ Connect to the `chat` namespace, e.g. `io('http://localhost:3000/chat', { auth: 
    max **10 MB**, then puts it in R2 under `messages/<uuid>.<ext>` and returns
    `{ imageUrl }`.
 3. Client sends the live message over WS: `emit('send_message', { groupId, imageUrl, content? })`.
+   The server only accepts `imageUrl`s of the exact shape step 2 produces
+   (`<R2_PUBLIC_BASE_URL>/messages/<uuid>.<ext>`), so clients can't bypass the
+   upload checks or broadcast arbitrary / `javascript:` links.
 
 Upload protections (added in this pass):
 
@@ -234,8 +241,9 @@ Upload protections (added in this pass):
 | `npm run start:dev`   | Run with watch                           |
 | `npm run start:prod`  | Run compiled `dist/main`                 |
 | `npm run prisma:generate` | Generate Prisma Client               |
-| `npm run prisma:push` | Push schema to the DB (no migration history) |
-| `npm run prisma:migrate` | Create/apply migrations              |
+| `npm run prisma:push` | Push schema to the DB (no migration history — local prototyping only) |
+| `npm run prisma:migrate` | Create a new migration in dev (`prisma migrate dev`) |
+| `npm run prisma:deploy` | Apply committed migrations (Railway pre-deploy; see below) |
 | `npm run prisma:studio` | Open Studio on **http://localhost:5556** |
 
 > No linter/formatter/test suit is configured for this project yet.
@@ -247,7 +255,7 @@ Upload protections (added in this pass):
   process first, then re-run generate/build.
 - **App won't boot / connection refused**: Postgres must be reachable on
   `DATABASE_URL`. Confirm the container mapping is `-p 5555:5432`
-  (`docker ps` should show `0.0.0.0:5555->5432/tcp`), then `npm run prisma:push`.
+  (`docker ps` should show `0.0.0.0:5555->5432/tcp`), then `npm run prisma:deploy`.
 - **`prisma:studio` won't open**: it is pinned to 5556 — open
   `http://localhost:5556`, not 5555 (5555 is the database).
 - **Image upload returns 503**: R2 vars not set (expected until configured).
@@ -257,17 +265,51 @@ Upload protections (added in this pass):
 ## Deployment Notes
 
 Per the project spec (`AGENT.md`): Cloudflare Workers cannot host a long-running
-NestJS process or persistent WebSockets. Suggested split:
+NestJS process or persistent WebSockets. Current setup:
 
+- **Backend (NestJS + Socket.io)** → Railway ([`railway.json`](./railway.json))
+- **Database** → Railway PostgreSQL (`DATABASE_URL` references the attached service)
 - **Frontend (React)** → Cloudflare Pages
-- **Backend (NestJS + Socket.io)** → Railway / Render / Fly.io (long-lived
-  Node runtime)
-- **Database** → Neon / Supabase (serverless Postgres); set `DATABASE_URL` to
-  the provider DSN
 - **Images** → Cloudflare R2 (works regardless of where the backend runs)
 
-For production: set a strong `JWT_SECRET`, restrict the Socket.io gateway CORS
-(`chat.gateway.ts` currently uses `origin: '*'`), and use HTTPS everywhere.
+Railway pipeline: `npm run build` (`prisma generate && nest build`) →
+pre-deploy `npm run prisma:deploy` → `node dist/main` (listens on `0.0.0.0:$PORT`).
+
+Required Railway variables: `DATABASE_URL`, `JWT_SECRET` (the app won't boot
+without it), `FRONTEND_URL`, and all five `R2_*` variables (uploads return 503
+otherwise).
+
+For production: restrict the Socket.io gateway CORS (`chat.gateway.ts`
+currently uses `origin: '*'`) and use HTTPS everywhere.
+
+### Database migrations
+
+Schema changes ship as committed migrations in `prisma/migrations/`:
+
+1. Edit `prisma/schema.prisma`.
+2. `npm run prisma:migrate -- --name <change>` against your local database;
+   commit the generated folder.
+3. Deploy — Railway's pre-deploy step runs `prisma migrate deploy`. A failing
+   migration aborts the deploy and the previous version keeps running.
+
+Committed migrations:
+
+- `0_init` — the original schema.
+- `1_lowercase_emails` — lowercases existing emails (the API now normalizes
+  them and looks them up exactly). A row whose lowercased email would collide
+  with another account is left untouched and needs manual resolution.
+
+`prisma db push` is no longer used in deploys: it keeps no history and forces
+`--accept-data-loss` for destructive changes.
+
+**One-time baseline.** The production database was created with `db push`, so
+it has tables but no `_prisma_migrations` history. `scripts/migrate-deploy.js`
+detects that case, checks that the live schema matches `0_init` exactly, and
+marks `0_init` as applied. After that it's a plain `migrate deploy`. If the live
+schema has drifted, the script refuses and the deploy fails without writing
+anything. Inspect the difference with
+`npx prisma migrate diff --from-url "$DATABASE_URL" --to-schema-datamodel prisma/schema.prisma --script`,
+reconcile, then redeploy.
 
 ## Security Notes
 
@@ -277,8 +319,9 @@ For production: set a strong `JWT_SECRET`, restrict the Socket.io gateway CORS
 - Uploads: whitelisted image MIME types, server-side extension derivation,
   size cap, path-style R2 addressing.
 - Gateway CORS is `*` — tighten to your frontend origin before shipping.
-- `.env` contains a local dev secret and is committed in this repo — for
-  production use real secrets via your host's environment/secrets manager.
+- `.env` is gitignored; production secrets live in Railway's service variables.
+- WebSocket `imageUrl`s must point at this app's own R2 uploads; avatar URLs
+  must be `https://`.
 
 ## Non-Goals (v1)
 

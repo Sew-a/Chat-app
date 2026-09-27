@@ -1,6 +1,9 @@
-import { IsEmail, IsOptional, IsString, MinLength, MaxLength } from 'class-validator';
+import { IsEmail, IsOptional, IsString, IsUrl, MinLength, MaxLength } from 'class-validator';
+import { EmptyToNull } from '../../../common/decorators/empty-to-null.decorator';
+import { NormalizeEmail } from '../../../common/decorators/normalize-email.decorator';
 
 export class SignupDto {
+  @NormalizeEmail()
   @IsEmail()
   email: string;
 
@@ -13,7 +16,10 @@ export class SignupDto {
   @MaxLength(32)
   username: string;
 
+  // https only — blocks `javascript:` / `data:` URLs rendered as <img src>.
+  @EmptyToNull()
   @IsOptional()
-  @IsString()
-  avatarUrl?: string;
+  @IsUrl({ protocols: ['https'], require_protocol: true })
+  @MaxLength(2048)
+  avatarUrl?: string | null;
 }

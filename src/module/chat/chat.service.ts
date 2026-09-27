@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { PrismaService } from '../../lib/database/prisma.service';
+import { StorageService } from '../../lib/storage/storage.service';
 import { GroupService } from '../group/group.service';
 
 @Injectable()
@@ -7,11 +8,15 @@ export class ChatService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly groupService: GroupService,
+    private readonly storageService: StorageService,
   ) {}
 
-  async createMessage(userId: string, groupId: string, content?: string, imageUrl?: string) {
+  async createMessage(userId: string, groupId: string, content?: string, imageUrl?: string | null) {
     if (!content && !imageUrl) {
       throw new BadRequestException('Message must have text or an image');
+    }
+    if (imageUrl && !this.storageService.isStoredImageUrl(imageUrl)) {
+      throw new BadRequestException('imageUrl must come from POST /groups/:groupId/messages/image');
     }
 
     await this.groupService.assertMembership(userId, groupId);

@@ -16,6 +16,15 @@ const MIME_TO_EXT: Record<string, string> = {
 
 const MAX_IMAGE_SIZE = 10 * 1024 * 1024; // 10 MB
 
+// Object keys are always `<folder>/<uuid><ext>` (see uploadImage). This pattern is
+// the single definition used to recognise URLs produced by uploadImage().
+const UUID = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
+const EXT = Object.values(MIME_TO_EXT).map((ext) => ext.slice(1)).join('|');
+const KEY_PATTERN = new RegExp(`^([a-zA-Z0-9_-]+)/${UUID}\\.(${EXT})$`);
+
+// Strip path separators / traversal from a folder name.
+const sanitizeFolder = (folder: string) => folder.replace(/[^a-zA-Z0-9_-]/g, '') || 'messages';
+
 @Injectable()
 export class StorageService {
   private client: S3Client | null = null;
@@ -26,7 +35,7 @@ export class StorageService {
       accessKeyId: process.env.R2_ACCESS_KEY_ID,
       secretAccessKey: process.env.R2_SECRET_ACCESS_KEY,
       bucket: process.env.R2_BUCKET_NAME,
-      publicBaseUrl: process.env.R2_PUBLIC_BASE_URL,
+      publicBaseUrl: process.env.R2_PUBLIC_BASE_URL?.replace(/\/+$/, ''),
     };
   }
 
@@ -62,8 +71,7 @@ export class StorageService {
     }
 
     const ext = this.assertImage(file);
-    const safeFolder = folder.replace(/[^a-zA-Z0-9_-]/g, ''); // strip any path separators / traversal
-    const key = `${safeFolder || 'messages'}/${randomUUID()}${ext}`;
+    const key = `${sanitizeFolder(folder)}/${randomUUID()}${ext}`;
 
     await this.getClient(config).send(
       new PutObjectCommand({
@@ -74,6 +82,17 @@ export class StorageService {
       }),
     );
 
-    return `${config.publicBaseUrl.replace(/\/+$/, '')}/${key}`;
+    return `${config.publicBaseUrl}/${key}`;
+  }
+
+  // True only for URLs of the exact shape uploadImage() produces:
+  // `<R2_PUBLIC_BASE_URL>/<folder>/<uuid>.<whitelisted ext>`. Lets callers reject
+  // arbitrary links (other hosts, `javascript:` URLs, ...) that skipped the upload.
+  isStoredImageUrl(url: string, folder = 'messages'): boolean {
+    const base = this.getConfig().publicBaseUrl;
+    if (!base || !url.startsWith(`${base}/`)) return false;
+
+    const match = KEY_PATTERN.exec(url.slice(base.length + 1));
+    return match?.[1] === sanitizeFolder(folder);
   }
 }

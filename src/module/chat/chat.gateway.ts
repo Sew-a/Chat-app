@@ -1,4 +1,4 @@
-import { UseGuards } from '@nestjs/common';
+import { UseFilters, UseGuards } from '@nestjs/common';
 import {
   ConnectedSocket,
   MessageBody,
@@ -7,11 +7,16 @@ import {
   WebSocketServer,
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
+import { WsExceptionFilter } from '../../common/filters/ws-exception.filter';
 import { WsAuthGuard } from '../../common/guards/ws-auth.guard';
 import { GroupService } from '../group/group.service';
 import { ChatService } from './chat.service';
+import { JoinRoomDto } from './dto/join-room.dto';
 import { SendMessageDto } from './dto/send-message.dto';
 
+// Errors (auth, validation, membership) are emitted to the client as an
+// `exception` event: { status: 'error', statusCode, message, event }.
+@UseFilters(new WsExceptionFilter())
 @UseGuards(WsAuthGuard)
 @WebSocketGateway({
   cors: { origin: '*' }, // tighten to your frontend origin before shipping
@@ -29,7 +34,7 @@ export class ChatGateway {
   // Client connects with: io('/chat', { auth: { token: accessToken } })
   // then emits this once per group it wants live updates for.
   @SubscribeMessage('join_group')
-  async handleJoinGroup(@ConnectedSocket() client: Socket, @MessageBody() data: { groupId: string }) {
+  async handleJoinGroup(@ConnectedSocket() client: Socket, @MessageBody() data: JoinRoomDto) {
     const userId = client.data.user.userId;
     await this.groupService.assertMembership(userId, data.groupId);
     await client.join(data.groupId);
