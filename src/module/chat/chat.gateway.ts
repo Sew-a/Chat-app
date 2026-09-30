@@ -19,8 +19,7 @@ import { SendMessageDto } from './dto/send-message.dto';
 @UseFilters(new WsExceptionFilter())
 @UseGuards(WsAuthGuard)
 @WebSocketGateway({
-  cors: { origin: '*' }, // tighten to your frontend origin before shipping
-  namespace: 'chat',
+  cors: { origin: 'https://sevavetisyan.up.railway.app' },
 })
 export class ChatGateway {
   @WebSocketServer()
