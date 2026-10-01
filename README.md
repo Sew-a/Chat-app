@@ -143,7 +143,7 @@ All values come from `.env` (see `.env.example`).
 | --------------------- | -------- | ---------------------------------------------------- |
 | `DATABASE_URL`        | Yes      | Prisma Postgres DSN. Local example points at `localhost:5555` |
 | `JWT_SECRET`          | Yes      | Secret used to sign/verify JWTs                       |
-| `FRONTEND_URL`        | No       | CORS origin for the React app (default `*`)           |
+| `FRONTEND_URL`        | No       | Comma-separated CORS origins for REST + Socket.io (default: all) |
 | `PORT`                | No       | HTTP port (default `3000`)                            |
 | `R2_ENDPOINT`         | No*      | R2/S3 endpoint e.g. `https://<account>.r2.cloudflarestorage.com` |
 | `R2_ACCESS_KEY_ID`    | No*      | R2 access key                                         |

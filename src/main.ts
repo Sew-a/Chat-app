@@ -2,12 +2,13 @@ import 'reflect-metadata';
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { AppModule } from './app.module';
+import { corsOrigin } from './common/cors';
 import { MulterErrorFilter } from './common/filters/multer-error.filter';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
-  app.enableCors({ origin: process.env.FRONTEND_URL ?? '*' });
+  app.enableCors({ origin: corsOrigin });
 
   app.useGlobalFilters(new MulterErrorFilter());
 

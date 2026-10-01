@@ -7,6 +7,7 @@ import {
   WebSocketServer,
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
+import { corsOrigin } from '../../common/cors';
 import { WsExceptionFilter } from '../../common/filters/ws-exception.filter';
 import { WsAuthGuard } from '../../common/guards/ws-auth.guard';
 import { GroupService } from '../group/group.service';
@@ -19,7 +20,8 @@ import { SendMessageDto } from './dto/send-message.dto';
 @UseFilters(new WsExceptionFilter())
 @UseGuards(WsAuthGuard)
 @WebSocketGateway({
-  cors: { origin: 'https://sevavetisyan.up.railway.app' },
+  namespace: 'chat',
+  cors: { origin: corsOrigin },
 })
 export class ChatGateway {
   @WebSocketServer()
