@@ -80,7 +80,7 @@ src/
 │       └── ws-auth.guard.ts            # WebSocket JWT guard
 └── module/
     ├── auth/                   # signup / signin / JWT (strategies, dto)
-    ├── user/                   # GET /users/me, PATCH /users/me
+    ├── user/                   # GET/PATCH /users/me, POST /users/me/avatar
     ├── group/                  # create, join by invite code, list mine
     └── chat/                   # REST history + upload, WS gateway/service
 ```
@@ -178,6 +178,7 @@ Full reference with example request/response bodies: [`API.md`](./API.md).
 | POST   | `/api/auth/signin`                     | –    | email, password → `{ accessToken, user }` |
 | GET    | `/api/users/me`                        | ✔    | My profile                               |
 | PATCH  | `/api/users/me`                        | ✔    | Update username / avatarUrl              |
+| POST   | `/api/users/me/avatar`                 | ✔    | Multipart `file` upload → updated profile |
 | POST   | `/api/groups`                          | ✔    | Create group → `{ id, name, inviteCode, ... }` |
 | POST   | `/api/groups/join`                     | ✔    | `{ inviteCode }` → joined group            |
 | GET    | `/api/groups`                          | ✔    | My groups (newest first)                 |
