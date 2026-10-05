@@ -35,7 +35,7 @@ export class UserController {
     return this.userService.updateProfile(user.userId, dto);
   }
 
-  // multipart/form-data upload (field "file"): stores the image in R2 under
+  // multipart/form-data upload (field "file"): stores the image in the bucket under
   // avatars/ and sets it as the user's avatar. Returns the updated profile.
   @Post('me/avatar')
   @UseInterceptors(FileInterceptor('file', imageUploadOptions))

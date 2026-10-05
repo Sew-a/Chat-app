@@ -76,7 +76,7 @@ Send `"avatarUrl": ""` or `null` to remove the avatar.
 
 ### Upload an avatar
 `POST /api/users/me/avatar` — requires auth. `multipart/form-data` with field **`file`**
-(JPEG/PNG/WebP/GIF/AVIF, max 10 MB). Stores the image in R2 under `avatars/` and sets it
+(JPEG/PNG/WebP/GIF/AVIF, max 10 MB). Stores the image in the bucket under `avatars/` and sets it
 as the avatar. Returns the updated profile (`{ id, email, username, avatarUrl }`).
 To add an avatar at sign-up, sign up first, then call this with the new token.
 
@@ -151,13 +151,18 @@ Response:
 
 Response:
 ```json
-{ "imageUrl": "https://your-r2-domain/messages/uuid.png" }
+{ "imageUrl": "https://<api-host>/api/files/messages/uuid.png" }
 ```
 
 Flow: upload the image via this endpoint first, then send the returned
 `imageUrl` (optionally with caption text) over the WebSocket `send_message`
 event below. `send_message` only accepts image URLs produced by this endpoint
-(`<R2_PUBLIC_BASE_URL>/messages/<uuid>.<ext>`); any other URL is rejected with 400.
+(`<PUBLIC_URL>/api/files/messages/<uuid>.<ext>`); any other URL is rejected with 400.
+
+### Get an uploaded image
+`GET /api/files/:folder/:name` — public (no auth), e.g. `/api/files/avatars/<uuid>.png`.
+Streams the image from the private bucket with `Cache-Control: public, max-age=31536000, immutable`.
+`imageUrl` / `avatarUrl` values returned by the upload endpoints point here. Unknown keys → 404.
 
 ---
 

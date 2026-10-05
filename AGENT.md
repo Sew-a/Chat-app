@@ -35,23 +35,13 @@ inside a group.
 - **Database**: PostgreSQL, via Prisma ORM (Neon or Supabase free tier for a
   serverless Postgres instance)
 - **Real-time**: Nest.js WebSocket Gateway (`@nestjs/websockets` + Socket.io)
-- **Image storage**: Cloudflare R2 (or any S3-compatible bucket)
+- **Image storage**: Railway Bucket (private, S3-compatible), served via `GET /api/files`
 - **Auth**: Email + password, hashed with bcrypt/argon2, JWT session
 
-## Infrastructure note (Cloudflare)
+## Infrastructure
 
-Cloudflare Workers cannot host a standard long-running Nest.js process or
-native persistent WebSocket connections. Recommended split for this demo:
-
-- **Frontend** → Cloudflare Pages
-- **Backend (Nest + Socket.io)** → Railway, Render, or Fly.io (free/cheap tier,
-  normal Node.js runtime, supports long-lived sockets)
-- **Image storage** → Cloudflare R2 (works fine independent of where the
-  backend runs)
-
-If a fully Cloudflare-native backend is required later, real-time would need
-to be rebuilt on Durable Objects instead of a Nest Gateway — out of scope for
-this demo.
+Everything is deployed on Railway: frontend, backend (Nest + Socket.io, a normal
+long-running Node.js process), PostgreSQL, and a private Railway Bucket for images.
 
 ## Terminology correction: "ID/password"
 
@@ -120,8 +110,8 @@ model Message {
 ## Backend Modules (per project code standards)
 
 - `src/lib/database/` — `prisma.module.ts` + `prisma.service.ts` (`@Global()`)
-- `src/lib/storage/` — `storage.module.ts` + `storage.service.ts` (R2 upload,
-  `@Global()`)
+- `src/lib/storage/` — `storage.module.ts` + `storage.service.ts` (bucket upload +
+  `GET /api/files`, `@Global()`)
 - `src/module/auth/` — sign-up, sign-in, JWT issuing/guard
 - `src/module/user/` — profile (username, avatar) read/update
 - `src/module/group/` — create group, join by invite code, list my groups
@@ -158,6 +148,5 @@ model Message {
 2. Group create/join by invite code
 3. REST message history (no real-time yet) to validate data model
 4. WebSocket gateway for live send/receive
-5. Image upload (R2) wired into chat
-6. Deploy: frontend → Cloudflare Pages, backend → Railway/Render/Fly, DB →
-   Neon/Supabase, images → R2
+5. Image upload (Railway Bucket) wired into chat
+6. Deploy: frontend, backend, Postgres and image bucket → Railway

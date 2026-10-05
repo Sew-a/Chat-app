@@ -1,7 +1,7 @@
 {
   "name": "chat-app-backend",
   "version": "0.1.0",
-  "description": "Group chat demo backend (NestJS + Prisma + Socket.io + R2)",
+  "description": "Group chat demo backend (NestJS + Prisma + Socket.io + Railway Bucket)",
   "private": true,
   "scripts": {
     "build": "prisma generate && nest build",

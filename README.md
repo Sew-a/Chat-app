@@ -5,7 +5,7 @@ Group chat demo backend. Users sign up/sign in, create a group (getting a single
 and images with everyone else in that group. No 1:1 DMs.
 
 Built with **NestJS 12**, **Prisma + PostgreSQL**, **Socket.io**, and
-**Cloudflare R2** (S3-compatible) for image storage.
+a private **Railway Bucket** (S3-compatible) for image storage.
 
 ---
 
@@ -39,7 +39,7 @@ Built with **NestJS 12**, **Prisma + PostgreSQL**, **Socket.io**, and
   auto-joined. **Join group** → type an existing invite code. No separate
   password: the invite code *is* the key (like Discord invite links / Kahoot).
 - Real-time chat per group via a Socket.io namespace (`/chat`).
-- Text messages (max 2000 chars) and image messages (via REST upload → R2).
+- Text messages (max 2000 chars) and image messages (via REST upload → bucket).
 - Paginated message history (cursor-based, 30 per page).
 - Group membership enforced on every REST and WS operation.
 - Validation on all inputs (class-validator + global `ValidationPipe`).
@@ -52,7 +52,7 @@ Built with **NestJS 12**, **Prisma + PostgreSQL**, **Socket.io**, and
 | Database    | PostgreSQL 16 via Prisma ORM                 |
 | Real-time   | `@nestjs/websockets` + Socket.io (`/chat`)   |
 | Auth        | Passport (JWT) + argon2 password hashing    |
-| Images      | Cloudflare R2 (any S3-compatible bucket)     |
+| Images      | Railway Bucket (any S3-compatible bucket)    |
 | Runtime     | Node.js 20+ (built with Node 24 in dev)      |
 
 ## Architecture / Project Structure
@@ -66,8 +66,8 @@ src/
 │   │   ├── prisma.module.ts    # @Global Prisma module
 │   │   └── prisma.service.ts   # PrismaClient lifecycle (connect/disconnect)
 │   └── storage/
-│       ├── storage.module.ts   # @Global R2 storage module
-│       └── storage.service.ts  # R2 upload (path-style S3, image whitelist)
+│       ├── storage.module.ts   # @Global storage module + GET /api/files
+│       └── storage.service.ts  # bucket upload/download (image whitelist)
 ├── common/
 │   ├── decorators/
 │   │   ├── current-user.decorator.ts   # @CurrentUser() -> { userId, email }
@@ -106,7 +106,7 @@ unambiguous alphabet, no `0/O/1/I`).
 
 - Node.js ≥ 20 (project developed on Node 24)
 - Docker (for local PostgreSQL)
-- Optional: a Cloudflare R2 bucket (or any S3-compatible storage) for image uploads
+- Optional: a Railway Bucket (or any S3-compatible storage) for image uploads
 
 ## Quick Start
 
@@ -145,14 +145,20 @@ All values come from `.env` (see `.env.example`).
 | `JWT_SECRET`          | Yes      | Secret used to sign/verify JWTs                       |
 | `FRONTEND_URL`        | No       | Comma-separated CORS origins for REST + Socket.io (default: all) |
 | `PORT`                | No       | HTTP port (default `3000`)                            |
-| `R2_ENDPOINT`         | No*      | R2/S3 endpoint e.g. `https://<account>.r2.cloudflarestorage.com` |
-| `R2_ACCESS_KEY_ID`    | No*      | R2 access key                                         |
-| `R2_SECRET_ACCESS_KEY`| No*      | R2 secret key                                         |
-| `R2_BUCKET_NAME`      | No*      | Bucket name, e.g. `chat-app-images`                   |
-| `R2_PUBLIC_BASE_URL`  | No*      | Public URL prefix for uploaded files                  |
+| `S3_ENDPOINT`         | No*      | Bucket S3 endpoint, e.g. `https://storage.railway.app` |
+| `S3_REGION`           | No       | Bucket region (default `auto`)                        |
+| `S3_BUCKET`           | No*      | Bucket name (Railway's globally unique `BUCKET` value) |
+| `S3_ACCESS_KEY_ID`    | No*      | Bucket access key                                     |
+| `S3_SECRET_ACCESS_KEY`| No*      | Bucket secret key                                     |
+| `S3_FORCE_PATH_STYLE` | No       | `true` for buckets that need path-style URLs (older Railway buckets) |
+| `PUBLIC_URL`          | No       | Public origin of this API for image URLs (default `https://$RAILWAY_PUBLIC_DOMAIN`, else `http://localhost:$PORT`) |
 
-\* Without R2 vars, `/chat/.../image` uploads return **503 Service Unavailable**
+\* Without the `S3_*` vars, image uploads return **503 Service Unavailable**
 (intended). Once configured, uploads work.
+
+The bucket is private (Railway buckets can't be public). Uploads return
+`<PUBLIC_URL>/api/files/<folder>/<uuid>.<ext>`, and that public route streams the
+object from the bucket with a long-lived immutable cache header.
 
 ## Ports
 
@@ -215,11 +221,11 @@ Connect to the `chat` namespace, e.g. `io('http://localhost:3000/chat', { auth: 
 1. Client uploads the file: `POST /api/groups/:groupId/messages/image`
    (`multipart/form-data`, field name **`file`**).
 2. Backend validates: member of the group, file is an image (JPEG/PNG/WebP/GIF/AVIF),
-   max **10 MB**, then puts it in R2 under `messages/<uuid>.<ext>` and returns
-   `{ imageUrl }`.
+   max **10 MB**, then puts it in the bucket under `messages/<uuid>.<ext>` and returns
+   `{ imageUrl }` (`<PUBLIC_URL>/api/files/messages/<uuid>.<ext>`).
 3. Client sends the live message over WS: `emit('send_message', { groupId, imageUrl, content? })`.
    The server only accepts `imageUrl`s of the exact shape step 2 produces
-   (`<R2_PUBLIC_BASE_URL>/messages/<uuid>.<ext>`), so clients can't bypass the
+   (`<PUBLIC_URL>/api/files/messages/<uuid>.<ext>`), so clients can't bypass the
    upload checks or broadcast arbitrary / `javascript:` links.
 
 Upload protections (added in this pass):
@@ -229,8 +235,6 @@ Upload protections (added in this pass):
 - `fileFilter` rejects non-`image/*` files with a clean **400**.
 - `StorageService` derives the stored extension from a **MIME-type whitelist**,
   never from the client filename (prevents arbitrary/HTML/JS uploads → stored XSS).
-- R2 client now uses **path-style addressing** (`forcePathStyle: true`), required
-  by R2/S3-compatible buckets.
 - `MulterError` is mapped to **413 / 400** instead of a raw 500.
 
 ## Scripts
@@ -259,29 +263,28 @@ Upload protections (added in this pass):
   (`docker ps` should show `0.0.0.0:5555->5432/tcp`), then `npm run prisma:deploy`.
 - **`prisma:studio` won't open**: it is pinned to 5556 — open
   `http://localhost:5556`, not 5555 (5555 is the database).
-- **Image upload returns 503**: R2 vars not set (expected until configured).
+- **Image upload returns 503**: `S3_*` vars not set (expected until configured).
 - **400 "avatarUrl must be a string" on signup**: fixed in this pass — `avatarUrl`
   is optional (`@IsOptional()`), so omitting it no longer fails validation.
 
 ## Deployment Notes
 
-Per the project spec (`AGENT.md`): Cloudflare Workers cannot host a long-running
-NestJS process or persistent WebSockets. Current setup:
+Everything runs on Railway:
 
 - **Backend (NestJS + Socket.io)** → Railway ([`railway.json`](./railway.json))
 - **Database** → Railway PostgreSQL (`DATABASE_URL` references the attached service)
-- **Frontend (React)** → Cloudflare Pages
-- **Images** → Cloudflare R2 (works regardless of where the backend runs)
+- **Frontend (React)** → Railway (separate repo)
+- **Images** → Railway Bucket (private; served through `GET /api/files/...`)
 
 Railway pipeline: `npm run build` (`prisma generate && nest build`) →
 pre-deploy `npm run prisma:deploy` → `node dist/main` (listens on `0.0.0.0:$PORT`).
 
 Required Railway variables: `DATABASE_URL`, `JWT_SECRET` (the app won't boot
-without it), `FRONTEND_URL`, and all five `R2_*` variables (uploads return 503
-otherwise).
-
-For production: restrict the Socket.io gateway CORS (`chat.gateway.ts`
-currently uses `origin: '*'`) and use HTTPS everywhere.
+without it), `FRONTEND_URL`, and the bucket variables (uploads return 503 otherwise). Set the
+bucket ones as references to the bucket service, e.g.
+`S3_BUCKET=${{<bucket>.BUCKET}}`, `S3_ENDPOINT=${{<bucket>.ENDPOINT}}`,
+`S3_REGION=${{<bucket>.REGION}}`, `S3_ACCESS_KEY_ID=${{<bucket>.ACCESS_KEY_ID}}`,
+`S3_SECRET_ACCESS_KEY=${{<bucket>.SECRET_ACCESS_KEY}}`.
 
 ### Database migrations
 
@@ -318,10 +321,10 @@ reconcile, then redeploy.
 - JWT contains `sub` (userId) + `email`; expiry 7 days.
 - Every group-scoped operation runs `assertMembership` (REST and WS).
 - Uploads: whitelisted image MIME types, server-side extension derivation,
-  size cap, path-style R2 addressing.
-- Gateway CORS is `*` — tighten to your frontend origin before shipping.
+  size cap; the bucket stays private and `GET /api/files` only serves upload-shaped keys.
+- REST and Socket.io CORS are limited to `FRONTEND_URL` origins.
 - `.env` is gitignored; production secrets live in Railway's service variables.
-- WebSocket `imageUrl`s must point at this app's own R2 uploads; avatar URLs
+- WebSocket `imageUrl`s must point at this app's own uploads; avatar URLs
   must be `https://`.
 
 ## Non-Goals (v1)
